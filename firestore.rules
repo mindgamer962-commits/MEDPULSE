@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // MVP Security Rules: Enforce schema and immutability where possible
+    // Note: Full role-based access control requires Firebase Auth integration (planned for future phases)
+    
+    match /phcs/{phcId} {
+      allow read: if true;
+      allow write: if false; // Only admin can modify PHCs
+    }
+    
+    match /medicines/{medicineId} {
+      allow read: if true;
+      allow write: if false; // Only admin can modify medicines
+    }
+    
+    match /stock_transactions/{txId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['phc_id', 'medicine_id', 'transaction_type', 'quantity', 'timestamp'])
+                    && request.resource.data.quantity is number 
+                    && request.resource.data.quantity >= 0 
+                    && request.resource.data.transaction_type in ['RECEIVED', 'USED', 'TRANSFER_IN', 'TRANSFER_OUT'];
+      allow update, delete: if false; // Append-only ledger
+    }
+    
+    match /daily_footfall/{footfallId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['phc_id', 'date', 'patient_count'])
+                    && request.resource.data.patient_count is number 
+                    && request.resource.data.patient_count >= 0;
+      allow update, delete: if false; // Append-only ledger
+    }
+    
+    match /transfer_recommendations/{recId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['source_phc_id', 'destination_phc_id', 'medicine_id', 'recommended_quantity', 'status'])
+                    && request.resource.data.recommended_quantity is number
+                    && request.resource.data.recommended_quantity > 0
+                    && request.resource.data.status in ['PENDING APPROVAL', 'RECOMMENDED', 'APPROVED', 'REJECTED'];
+      allow update: if request.resource.data.status in ['APPROVED', 'REJECTED'];
+      allow delete: if false;
+    }
+  }
+}
