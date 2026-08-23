@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "node server.js",
     "dev": "vite",
     "server": "node server.js",
     "build": "vite build",
@@ -13,6 +14,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
+    "cors": "^2.8.6",
     "express": "^5.2.1",
     "firebase": "^12.17.1",
     "react": "^19.2.8",

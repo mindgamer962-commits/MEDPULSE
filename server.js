@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import cors from "cors";
 import { GoogleGenAI } from "@google/genai";
 import {
   getPHCs,
@@ -11,8 +12,10 @@ import {
 const app = express();
 app.use(express.json());
 
+const allowedOrigin = process.env.FRONTEND_URL || "http://localhost:5173";
+app.use(cors({ origin: allowedOrigin }));
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Initialize Gemini Client
 const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -143,6 +146,6 @@ Return ONLY the explanation text.`;
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`MedPulse Server running on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`MedPulse Server running on port ${PORT}`);
 });

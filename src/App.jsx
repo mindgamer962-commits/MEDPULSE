@@ -392,7 +392,8 @@ function App() {
 
         // 3. Fetch server-side Gemini Explanation
         try {
-          const response = await fetch("/api/ai/explanation", {
+          const apiUrl = import.meta.env.VITE_API_URL || "";
+          const response = await fetch(`${apiUrl}/api/ai/explanation`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json"
