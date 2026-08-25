@@ -19,6 +19,10 @@ import {
  * @property {string} phc_id - Unique ID of the Primary Health Centre (often matches the Firestore doc ID)
  * @property {string} name - Name of the PHC
  * @property {string} district - District the PHC belongs to
+ * @property {string} [state_id] - Optional state ID
+ * @property {string} [state_name] - Optional state name
+ * @property {string} [district_id] - Optional district ID
+ * @property {string} [district_name] - Optional district name
  * @property {number} latitude - Latitude coordinate
  * @property {number} longitude - Longitude coordinate
  * @property {Timestamp} last_updated - Firestore Server Timestamp of last update
