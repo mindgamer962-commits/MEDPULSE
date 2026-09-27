@@ -33,12 +33,86 @@ service cloud.firestore {
     
     match /transfer_recommendations/{recId} {
       allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['source_phc_id', 'destination_phc_id', 'medicine_id', 'recommended_quantity', 'status'])
-                    && request.resource.data.recommended_quantity is number
-                    && request.resource.data.recommended_quantity > 0
-                    && request.resource.data.status in ['PENDING APPROVAL', 'RECOMMENDED', 'APPROVED', 'REJECTED'];
+      allow create: if request.resource.data.keys().hasAll([
+                        'destination_phc_id',
+                        'medicine_id',
+                        'status'
+                      ])
+                      && request.resource.data.status in [
+                        'PENDING APPROVAL',
+                        'RECOMMENDED',
+                        'APPROVED',
+                        'REJECTED'
+                      ]
+                      && (
+                        (
+                          request.resource.data.keys().hasAll([
+                            'source_phc_id',
+                            'recommended_quantity'
+                          ])
+                          && request.resource.data.recommended_quantity is number
+                          && request.resource.data.recommended_quantity > 0
+                        )
+                        ||
+                        (
+                          request.resource.data.keys().hasAll([
+                            'allocations',
+                            'total_quantity'
+                          ])
+                          && request.resource.data.total_quantity is number
+                          && request.resource.data.total_quantity > 0
+                        )
+                      );
       allow update: if request.resource.data.status in ['APPROVED', 'REJECTED'];
       allow delete: if false;
+    }
+
+    match /states/{stateId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /districts/{districtId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /beds/{bedId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasAll(['phc_id', 'total_beds', 'occupied_beds', 'available_beds'])
+                            && request.resource.data.phc_id == bedId
+                            && request.resource.data.total_beds is number
+                            && request.resource.data.total_beds >= 0
+                            && request.resource.data.occupied_beds is number
+                            && request.resource.data.occupied_beds >= 0
+                            && request.resource.data.occupied_beds <= request.resource.data.total_beds
+                            && request.resource.data.available_beds is number
+                            && request.resource.data.available_beds == (request.resource.data.total_beds - request.resource.data.occupied_beds)
+                            && (!request.resource.data.keys().hasAny(['emergency_beds']) || (request.resource.data.emergency_beds is number && request.resource.data.emergency_beds >= 0 && request.resource.data.emergency_beds <= request.resource.data.total_beds))
+                            && (!request.resource.data.keys().hasAny(['icu_beds']) || (request.resource.data.icu_beds is number && request.resource.data.icu_beds >= 0 && request.resource.data.icu_beds <= request.resource.data.total_beds));
+      allow delete: if false;
+    }
+
+    match /staff/{staffId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /staff_attendance/{attId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['staff_id', 'phc_id', 'date', 'status'])
+                    && request.resource.data.status in ['PRESENT', 'ABSENT', 'LATE', 'AUTHORIZED_LEAVE'];
+      allow update, delete: if false;
+    }
+
+    match /workforce_dataset_metadata/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /workforce_metadata/{docId} {
+      allow read: if true;
+      allow write: if false;
     }
   }
 }

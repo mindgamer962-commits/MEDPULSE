@@ -29,6 +29,23 @@ import {
  */
 
 /**
+ * @typedef {Object} State
+ * @property {string} state_id - Unique state ID (e.g., "GJ")
+ * @property {string} name - Name of the state (e.g., "Gujarat")
+ * @property {string} code - State code
+ * @property {boolean} active - Whether the state is currently active
+ */
+
+/**
+ * @typedef {Object} District
+ * @property {string} district_id - Unique district ID (e.g., "JUN")
+ * @property {string} name - Name of the district (e.g., "Junagadh")
+ * @property {string} state_id - Parent state ID
+ * @property {string} state_name - Parent state name
+ * @property {boolean} active - Whether the district is currently active
+ */
+
+/**
  * @typedef {Object} Medicine
  * @property {string} medicine_id - Unique medicine identifier (often matches the Firestore doc ID)
  * @property {string} name - Name of the medicine (e.g. Paracetamol)
@@ -105,6 +122,94 @@ export async function getPHCs() {
   checkDbReady();
   const colRef = collection(db, "phcs");
   const q = query(colRef, orderBy("name", "asc"));
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map((doc) => doc.data());
+}
+
+/**
+ * Create a new State document.
+ * @param {State} stateData 
+ * @returns {Promise<string>} Created State ID
+ */
+export async function createState(stateData) {
+  checkDbReady();
+  if (!stateData.state_id || typeof stateData.state_id !== 'string') throw new Error("Invalid or missing state_id");
+  const id = stateData.state_id;
+  const docRef = doc(db, "states", id);
+  const data = {
+    ...stateData,
+    state_id: id,
+  };
+  await setDoc(docRef, data);
+  return id;
+}
+
+/**
+ * Fetch all States.
+ * @returns {Promise<State[]>} List of States
+ */
+export async function getStates() {
+  checkDbReady();
+  const colRef = collection(db, "states");
+  const q = query(colRef, orderBy("name", "asc"));
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map((doc) => doc.data());
+}
+
+/**
+ * Create a new District document.
+ * @param {District} districtData 
+ * @returns {Promise<string>} Created District ID
+ */
+export async function createDistrict(districtData) {
+  checkDbReady();
+  if (!districtData.district_id || typeof districtData.district_id !== 'string') throw new Error("Invalid or missing district_id");
+  const id = districtData.district_id;
+  const docRef = doc(db, "districts", id);
+  const data = {
+    ...districtData,
+    district_id: id,
+  };
+  await setDoc(docRef, data);
+  return id;
+}
+
+/**
+ * Fetch all Districts.
+ * @returns {Promise<District[]>} List of Districts
+ */
+export async function getDistricts() {
+  checkDbReady();
+  const colRef = collection(db, "districts");
+  const q = query(colRef, orderBy("name", "asc"));
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map((doc) => doc.data());
+}
+
+/**
+ * Fetch PHCs by state ID.
+ * @param {string} stateId 
+ * @returns {Promise<PHC[]>} List of PHCs
+ */
+export async function getPHCsByState(stateId) {
+  checkDbReady();
+  if (!stateId || typeof stateId !== 'string') throw new Error("Invalid or missing stateId");
+  const colRef = collection(db, "phcs");
+  const q = query(colRef, where("state_id", "==", stateId));
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map((doc) => doc.data());
+}
+
+/**
+ * Fetch PHCs by district ID.
+ * @param {string} districtId 
+ * @returns {Promise<PHC[]>} List of PHCs
+ */
+export async function getPHCsByDistrict(districtId) {
+  checkDbReady();
+  if (!districtId || typeof districtId !== 'string') throw new Error("Invalid or missing districtId");
+  const colRef = collection(db, "phcs");
+  const q = query(colRef, where("district_id", "==", districtId));
   const snapshot = await getDocs(q);
   return snapshot.docs.map((doc) => doc.data());
 }
@@ -203,15 +308,27 @@ export async function recordDailyFootfall(footfallData) {
 }
 
 /**
- * Fetch all daily footfall records.
+ * Fetch all daily footfall records, optionally filtered by PHC.
+ * @param {string} [phcId] - Optional PHC ID filter
  * @returns {Promise<DailyFootfall[]>} List of footfall logs
  */
-export async function getDailyFootfall() {
+export async function getDailyFootfall(phcId = null) {
   checkDbReady();
   const colRef = collection(db, "daily_footfall");
-  const q = query(colRef, orderBy("date", "desc"));
+  let q;
+  if (phcId) {
+    q = query(colRef, where("phc_id", "==", phcId));
+  } else {
+    q = query(colRef, orderBy("date", "desc"));
+  }
   const snapshot = await getDocs(q);
-  return snapshot.docs.map((doc) => doc.data());
+  const list = snapshot.docs.map((doc) => doc.data());
+  list.sort((a, b) => {
+    const da = a.date?.toDate ? a.date.toDate() : new Date(a.date);
+    const db = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+    return db - da;
+  });
+  return list;
 }
 
 /**
@@ -243,18 +360,25 @@ export async function getCurrentStock(phcId, medicineId) {
 export async function getFilteredStockTransactions(phcId, medicineId) {
   checkDbReady();
   const colRef = collection(db, "stock_transactions");
-  const snapshot = await getDocs(colRef);
+  let q;
+  if (phcId && medicineId) {
+    q = query(colRef, where("phc_id", "==", phcId), where("medicine_id", "==", medicineId));
+  } else if (phcId) {
+    q = query(colRef, where("phc_id", "==", phcId));
+  } else if (medicineId) {
+    q = query(colRef, where("medicine_id", "==", medicineId));
+  } else {
+    q = colRef;
+  }
+  const snapshot = await getDocs(q);
   let txs = snapshot.docs.map((doc) => doc.data());
 
-  if (phcId) {
-    txs = txs.filter((t) => t.phc_id === phcId);
-  }
-  if (medicineId) {
-    txs = txs.filter((t) => t.medicine_id === medicineId);
-  }
-
   // Sort by timestamp descending
-  txs.sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
+  txs.sort((a, b) => {
+    const da = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp);
+    const db = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp);
+    return db - da;
+  });
   return txs;
 }
 
@@ -267,8 +391,9 @@ export async function getInventory(phcId) {
   checkDbReady();
   const medicines = await getMedicines();
   const colRef = collection(db, "stock_transactions");
-  const snapshot = await getDocs(colRef);
-  const allTxs = snapshot.docs.map((doc) => doc.data()).filter((t) => t.phc_id === phcId);
+  const q = phcId ? query(colRef, where("phc_id", "==", phcId)) : colRef;
+  const snapshot = await getDocs(q);
+  const allTxs = snapshot.docs.map((doc) => doc.data());
 
   const inventory = [];
   for (const med of medicines) {
@@ -279,7 +404,11 @@ export async function getInventory(phcId) {
     let lastUpdated = null;
 
     // Sort ascending to calculate chronologically
-    medTxs.sort((a, b) => a.timestamp.toDate() - b.timestamp.toDate());
+    medTxs.sort((a, b) => {
+      const da = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp);
+      const db = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp);
+      return da - db;
+    });
 
     for (const tx of medTxs) {
       if (tx.transaction_type === "RECEIVED" || tx.transaction_type === "TRANSFER_IN") {
@@ -289,7 +418,9 @@ export async function getInventory(phcId) {
         currentStock -= tx.quantity;
         if (tx.transaction_type === "USED") totalUsed += tx.quantity;
       }
-      if (!lastUpdated || tx.timestamp.toDate() > lastUpdated.toDate()) {
+      const txDate = tx.timestamp?.toDate ? tx.timestamp.toDate() : new Date(tx.timestamp);
+      const lastDate = lastUpdated?.toDate ? lastUpdated.toDate() : (lastUpdated ? new Date(lastUpdated) : null);
+      if (!lastDate || txDate > lastDate) {
         lastUpdated = tx.timestamp;
       }
     }
@@ -351,12 +482,13 @@ export async function getAllInventory() {
 export async function checkForDuplicateFootfall(phcId, dateStr) {
   checkDbReady();
   const colRef = collection(db, "daily_footfall");
-  const snapshot = await getDocs(colRef);
+  const q = phcId ? query(colRef, where("phc_id", "==", phcId)) : colRef;
+  const snapshot = await getDocs(q);
   
   for (const docSnap of snapshot.docs) {
     const data = docSnap.data();
-    if (data.phc_id === phcId && data.date) {
-      const txDateStr = data.date.toDate().toISOString().split("T")[0];
+    if (data.date) {
+      const txDateStr = data.date.toDate ? data.date.toDate().toISOString().split("T")[0] : (data.date instanceof Date ? data.date.toISOString().split("T")[0] : String(data.date).split("T")[0]);
       if (txDateStr === dateStr) {
         return data;
       }
@@ -380,42 +512,78 @@ export async function updateDailyFootfall(footfallId, patientCount) {
 /**
  * Fetch and calculate dynamic footfall analytics for a selected PHC.
  * @param {string} phcId 
+ * @param {string|Date|null} [referenceDate=null] - Optional reference date (YYYY-MM-DD or Date object). Defaults to current date.
  * @returns {Promise<{ todayPatients: number|string, last7DaysTotal: number|string, last7DaysAvg: number|string, prev7DaysAvg: number|string, trend: string }>}
  */
-export async function getFootfallStats(phcId) {
+export async function getFootfallStats(phcId, referenceDate = null) {
   checkDbReady();
   const colRef = collection(db, "daily_footfall");
-  const snapshot = await getDocs(colRef);
-  const allFfs = snapshot.docs.map((doc) => doc.data()).filter((f) => f.phc_id === phcId);
+  const q = phcId ? query(colRef, where("phc_id", "==", phcId)) : colRef;
+  const snapshot = await getDocs(q);
+  const allFfs = snapshot.docs.map((doc) => doc.data());
 
-  // Determine current local date (frozen to mock dataset time)
-  const now = new Date();
-  const todayStr = now.toISOString().split("T")[0];
+  // Determine reference date (frozen to target date or current date for backward compatibility)
+  let refDate;
+  if (referenceDate) {
+    if (typeof referenceDate === 'string') {
+      const parts = referenceDate.split('T')[0].split('-').map(Number);
+      if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+        refDate = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+      } else {
+        refDate = new Date(referenceDate);
+      }
+    } else if (referenceDate instanceof Date) {
+      refDate = new Date(Date.UTC(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate()));
+    } else {
+      refDate = new Date();
+    }
+  } else {
+    refDate = new Date();
+  }
+
+  const todayStr = refDate.toISOString().split("T")[0];
+
+  // Helper to extract YYYY-MM-DD from doc
+  const getDocDateStr = (f) => {
+    if (!f || !f.date) return null;
+    if (f.date.toDate) return f.date.toDate().toISOString().split("T")[0];
+    if (f.date instanceof Date) return f.date.toISOString().split("T")[0];
+    return String(f.date).split("T")[0];
+  };
 
   // 1. Today's patients
-  const todayRecord = allFfs.find((f) => f.date.toDate().toISOString().split("T")[0] === todayStr);
+  const todayRecord = allFfs.find((f) => {
+    const dateStr = getDocDateStr(f);
+    return dateStr === todayStr;
+  });
   const todayPatients = todayRecord ? todayRecord.patient_count : "No data for today";
 
   // 2. Define trend periods
-  // Recent 7 calendar days: range [today - 6 days, today]
+  // Recent 7 calendar days: range [referenceDate - 6 days, referenceDate] (inclusive, 7 days)
   const recentDays = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date();
-    d.setDate(now.getDate() - i);
+    const d = new Date(refDate.getTime());
+    d.setUTCDate(refDate.getUTCDate() - i);
     recentDays.push(d.toISOString().split("T")[0]);
   }
 
-  // Previous 7 calendar days: range [today - 13 days, today - 7 days]
+  // Previous 7 calendar days: range [referenceDate - 13 days, referenceDate - 7 days] (inclusive, 7 days)
   const prevDays = [];
   for (let i = 7; i < 14; i++) {
-    const d = new Date();
-    d.setDate(now.getDate() - i);
+    const d = new Date(refDate.getTime());
+    d.setUTCDate(refDate.getUTCDate() - i);
     prevDays.push(d.toISOString().split("T")[0]);
   }
 
   // 3. Filter entries in recent and previous day sets
-  const recentRecords = allFfs.filter((f) => recentDays.includes(f.date.toDate().toISOString().split("T")[0]));
-  const prevRecords = allFfs.filter((f) => prevDays.includes(f.date.toDate().toISOString().split("T")[0]));
+  const recentRecords = allFfs.filter((f) => {
+    const dateStr = getDocDateStr(f);
+    return dateStr && recentDays.includes(dateStr);
+  });
+  const prevRecords = allFfs.filter((f) => {
+    const dateStr = getDocDateStr(f);
+    return dateStr && prevDays.includes(dateStr);
+  });
 
   let last7DaysTotal = 0;
   let last7DaysAvg = "Insufficient data";
@@ -466,13 +634,13 @@ export async function getFootfallStats(phcId) {
 export async function forecastDemand(phcId, medicineId) {
   checkDbReady();
 
-  // 1. Fetch relevant stock transactions & footfall
-  const allFfs = await getDailyFootfall();
-  const phcFfs = allFfs.filter((f) => f.phc_id === phcId);
+  // 1. Fetch relevant stock transactions & footfall directly filtered by PHC and medicine
+  const phcFfs = await getDailyFootfall(phcId);
 
-  const colRef = collection(db, "stock_transactions");
-  const snapshot = await getDocs(colRef);
-  const phcTxs = snapshot.docs.map((doc) => doc.data()).filter((t) => t.phc_id === phcId && t.medicine_id === medicineId);
+  const txCol = collection(db, "stock_transactions");
+  const txQuery = query(txCol, where("phc_id", "==", phcId), where("medicine_id", "==", medicineId));
+  const snapshot = await getDocs(txQuery);
+  const phcTxs = snapshot.docs.map((doc) => doc.data());
 
   // 2. Insufficient data checks
   // Check if we have less than 14 footfall records or if we have less than 10 stock transactions overall
@@ -502,11 +670,61 @@ export async function forecastDemand(phcId, medicineId) {
   const ffs30 = phcFfs.filter((f) => f.date.toDate() >= thirtyDaysAgo);
   const txsUsed30 = phcTxs.filter((t) => t.transaction_type === "USED" && t.timestamp.toDate() >= thirtyDaysAgo);
 
-  const totalPatients30 = ffs30.reduce((acc, curr) => acc + curr.patient_count, 0);
-  const totalUsed30 = txsUsed30.reduce((acc, curr) => acc + curr.quantity, 0);
+  let usageRate = 0;
+  let isHistoricalFallback = false;
+  let fallbackReferenceDate = null;
 
-  // usage rate: medicine units per patient
-  const usageRate = totalPatients30 > 0 ? (totalUsed30 / totalPatients30) : 0.5;
+  if (txsUsed30.length > 0) {
+    // Current 30-day window contains valid USED transactions
+    const totalPatients30 = ffs30.reduce((acc, curr) => acc + curr.patient_count, 0);
+    const totalUsed30 = txsUsed30.reduce((acc, curr) => acc + curr.quantity, 0);
+    usageRate = totalPatients30 > 0 ? (totalUsed30 / totalPatients30) : 0.5;
+  } else {
+    // Current 30-day window contains zero valid USED transactions -> search historical stock_transactions
+    const allUsedTxs = phcTxs.filter((t) => t.transaction_type === "USED" && t.quantity > 0);
+
+    if (allUsedTxs.length === 0) {
+      // Genuinely no usable USED history anywhere for this PHC + medicine -> INSUFFICIENT_DATA
+      return { error: "Insufficient historical usage data" };
+    }
+
+    // Sort to find the most recent valid historical period containing USED transactions
+    allUsedTxs.sort((a, b) => {
+      const da = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp);
+      const db = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp);
+      return db - da; // newest first
+    });
+
+    const latestUsedDate = allUsedTxs[0].timestamp?.toDate ? allUsedTxs[0].timestamp.toDate() : new Date(allUsedTxs[0].timestamp);
+    const histWindowStart = new Date(latestUsedDate);
+    histWindowStart.setDate(latestUsedDate.getDate() - 30);
+
+    const histUsedTxs = allUsedTxs.filter((t) => {
+      const d = t.timestamp?.toDate ? t.timestamp.toDate() : new Date(t.timestamp);
+      return d >= histWindowStart && d <= latestUsedDate;
+    });
+
+    const histFfs = phcFfs.filter((f) => {
+      const d = f.date?.toDate ? f.date.toDate() : new Date(f.date);
+      return d >= histWindowStart && d <= latestUsedDate;
+    });
+
+    const histTotalUsed = histUsedTxs.reduce((acc, c) => acc + c.quantity, 0);
+    const histTotalPatients = histFfs.reduce((acc, c) => acc + c.patient_count, 0);
+
+    if (histTotalPatients > 0 && histTotalUsed > 0) {
+      usageRate = histTotalUsed / histTotalPatients;
+    } else if (histTotalUsed > 0) {
+      const totalAllUsed = allUsedTxs.reduce((acc, c) => acc + c.quantity, 0);
+      const totalAllPatients = phcFfs.reduce((acc, c) => acc + c.patient_count, 0);
+      usageRate = totalAllPatients > 0 ? (totalAllUsed / totalAllPatients) : 0.5;
+    } else {
+      usageRate = 0.5;
+    }
+
+    isHistoricalFallback = true;
+    fallbackReferenceDate = latestUsedDate;
+  }
 
   // 5. Calculate recent vs previous 7 days averages for footfall trend
   const recentDays = [];
@@ -522,11 +740,23 @@ export async function forecastDemand(phcId, medicineId) {
     prevDays.push(d.toISOString().split("T")[0]);
   }
 
-  const recentRecords = phcFfs.filter((f) => recentDays.includes(f.date.toDate().toISOString().split("T")[0]));
-  const prevRecords = phcFfs.filter((f) => prevDays.includes(f.date.toDate().toISOString().split("T")[0]));
+  const getDateStr = (f) => {
+    if (!f || !f.date) return "";
+    if (f.date.toDate) return f.date.toDate().toISOString().split("T")[0];
+    if (f.date instanceof Date) return f.date.toISOString().split("T")[0];
+    return String(f.date).split("T")[0];
+  };
 
-  const recentAvgFf = recentRecords.length > 0 ? (recentRecords.reduce((acc, curr) => acc + curr.patient_count, 0) / recentRecords.length) : 0;
-  const prevAvgFf = prevRecords.length > 0 ? (prevRecords.reduce((acc, curr) => acc + curr.patient_count, 0) / prevRecords.length) : 0;
+  const recentRecords = phcFfs.filter((f) => recentDays.includes(getDateStr(f)));
+  const prevRecords = phcFfs.filter((f) => prevDays.includes(getDateStr(f)));
+
+  let recentAvgFf = recentRecords.length > 0 ? (recentRecords.reduce((acc, curr) => acc + curr.patient_count, 0) / recentRecords.length) : 0;
+  if (recentAvgFf === 0 && ffs30.length > 0) {
+    recentAvgFf = ffs30.reduce((acc, curr) => acc + curr.patient_count, 0) / ffs30.length;
+  } else if (recentAvgFf === 0 && phcFfs.length > 0) {
+    recentAvgFf = phcFfs.reduce((acc, curr) => acc + curr.patient_count, 0) / phcFfs.length;
+  }
+  const prevAvgFf = prevRecords.length > 0 ? (prevRecords.reduce((acc, curr) => acc + curr.patient_count, 0) / prevRecords.length) : recentAvgFf;
 
   // Trend factor
   let trendRatio = 1.0;
@@ -573,7 +803,11 @@ export async function forecastDemand(phcId, medicineId) {
                            trend === "DECREASING" ? "a decline in patient footfalls (- " + Math.round((1 - trendRatio) * 100) + "%)" :
                            "a stable patient footfall rate";
 
-  const reasoning = `Based on historical records, this PHC has a recent average footfall of ${Math.round(recentAvgFf)} patients/day and an operating consumption rate of ${usageRate.toFixed(2)} units of ${medName} per patient. Combining this with ${trendDescription} over the past 14 days, the model projects a total demand of ${totalForecast} units of ${medName} for the next 7 days.`;
+  const fallbackNotice = isHistoricalFallback
+    ? ` (consumption rate established from latest available historical usage period ending ${fallbackReferenceDate ? fallbackReferenceDate.toISOString().split('T')[0] : 'prior baseline'})`
+    : '';
+
+  const reasoning = `Based on historical records, this PHC has a recent average footfall of ${Math.round(recentAvgFf)} patients/day and an operating consumption rate of ${usageRate.toFixed(2)} units of ${medName} per patient${fallbackNotice}. Combining this with ${trendDescription} over the past 14 days, the model projects a total demand of ${totalForecast} units of ${medName} for the next 7 days.`;
 
   return {
     phcId,
@@ -585,6 +819,8 @@ export async function forecastDemand(phcId, medicineId) {
     currentStock,
     trend,
     reasoning,
+    isHistoricalFallback,
+    fallbackReferenceDate,
     generatedAt: new Date()
   };
 }
@@ -675,73 +911,53 @@ function getHaversineDistance(lat1, lon1, lat2, lon2) {
   return d;
 }
 
+import { findTransferSourcesByDistrict } from './network.js';
+
 /**
  * Find nearby PHCs that have a safe available surplus of the same medicine.
  * @param {string} destinationPhcId
  * @param {string} medicineId
- * @returns {Promise<Array<{ sourcePhc: string, medicine: string, currentStock: number, protectedDemand: number, safeSurplus: number, distance: number }>>}
+ * @returns {Promise<Array<{ sourcePhcId: string, sourcePhc: string, medicine: string, currentStock: number, protectedDemand: number, safeSurplus: number, classification: string }>>}
  */
 export async function findSurplusPHCs(destinationPhcId, medicineId) {
   checkDbReady();
-
-  const phcs = await getPHCs();
-  const medicines = await getMedicines();
-  const med = medicines.find((m) => m.medicine_id === medicineId);
-  const medName = med ? med.name : medicineId;
-
-  const destPhc = phcs.find((p) => p.phc_id === destinationPhcId);
-  if (!destPhc || destPhc.latitude === undefined || destPhc.longitude === undefined) {
-    return [];
-  }
 
   // 1. Calculate destination shortage
   const destStockOut = await predictStockOut(destinationPhcId, medicineId);
   if (destStockOut.error) return [];
   const destShortage = Math.max(0, destStockOut.predicted7DayDemand - destStockOut.currentStock);
 
-  // 2. Iterate through all other PHCs to find candidates
-  const candidates = [];
-  for (const phc of phcs) {
-    if (phc.phc_id === destinationPhcId) continue;
-    if (phc.latitude === undefined || phc.longitude === undefined) continue;
+  // 2. Get all surplus candidates grouped by district logic
+  const networkSources = await findTransferSourcesByDistrict(destinationPhcId, medicineId);
 
-    const sourceStockOut = await predictStockOut(phc.phc_id, medicineId);
-    if (sourceStockOut.error) continue;
+  const medicines = await getMedicines();
+  const med = medicines.find((m) => m.medicine_id === medicineId);
+  const medName = med ? med.name : medicineId;
 
-    const currentStock = sourceStockOut.currentStock;
-    const protectedDemand = sourceStockOut.predicted7DayDemand;
-    const safeSurplus = currentStock - protectedDemand;
+  const candidates = networkSources.map(src => ({
+    sourcePhcId: src.phc_id,
+    sourcePhc: src.name,
+    medicine: medName,
+    currentStock: src.current_stock,
+    protectedDemand: src.current_stock - src.safe_surplus, // reconstruct
+    safeSurplus: src.safe_surplus,
+    classification: src.classification
+  }));
 
-    if (safeSurplus > 0) {
-      const distance = getHaversineDistance(
-        destPhc.latitude,
-        destPhc.longitude,
-        phc.latitude,
-        phc.longitude
-      );
-
-      candidates.push({
-        sourcePhcId: phc.phc_id,
-        sourcePhc: phc.name,
-        medicine: medName,
-        currentStock,
-        protectedDemand,
-        safeSurplus,
-        distance: parseFloat(distance.toFixed(1)),
-      });
-    }
-  }
-
-  // 3. Sort candidates
+  // 3. Sort candidates internally for backward compatibility 
+  // (generateTransferRecommendation does its own final sort)
   candidates.sort((a, b) => {
-    // Sort 1: Can they fully cover the destination shortage?
+    // Sort 1: District priority
+    if (a.classification === "SAME_DISTRICT" && b.classification === "OTHER_DISTRICT") return -1;
+    if (a.classification === "OTHER_DISTRICT" && b.classification === "SAME_DISTRICT") return 1;
+
+    // Sort 2: Can they fully cover the destination shortage?
     const aCovers = a.safeSurplus >= destShortage;
     const bCovers = b.safeSurplus >= destShortage;
     if (aCovers && !bCovers) return -1;
     if (!aCovers && bCovers) return 1;
-
-    // Sort 2: Shortest distance
-    return a.distance - b.distance;
+    
+    return 0;
   });
 
   return candidates;
@@ -914,19 +1130,27 @@ export async function generateTransferRecommendation(destinationPhcId, medicineI
   }
 
   // 4. Rank candidates:
-  // - 1. Can safely satisfy remaining need
-  // - 2. Shortest distance
-  // - 3. Highest safe surplus
+  // - 1. Same district preferred
+  // - 2. Can safely satisfy remaining need
+  // - 3. Shortest distance
+  // - 4. Highest safe surplus
   validCandidates.sort((a, b) => {
+    // 1. Same district preferred
+    if (a.classification === "SAME_DISTRICT" && b.classification === "OTHER_DISTRICT") return -1;
+    if (a.classification === "OTHER_DISTRICT" && b.classification === "SAME_DISTRICT") return 1;
+
+    // 2. Can safely satisfy remaining need
     const aCovers = a.safeSurplus >= destNeed;
     const bCovers = b.safeSurplus >= destNeed;
     if (aCovers && !bCovers) return -1;
     if (!aCovers && bCovers) return 1;
 
+    // 3. Shortest distance
     if (a.transport.distanceKm !== b.transport.distanceKm) {
       return a.transport.distanceKm - b.transport.distanceKm;
     }
 
+    // 4. Highest safe surplus
     return b.safeSurplus - a.safeSurplus;
   });
 
@@ -1130,7 +1354,7 @@ export async function setupDemoState(phcId, medicineId) {
     footfall_id: "demo-footfall-spike",
     phc_id: phcId,
     date: Timestamp.fromDate(new Date()),
-    patient_count: 500000, // MASSIVE spike to force multi-source
+    patient_count: 150, // Realistic spike
     is_demo: true
   });
 
@@ -1161,4 +1385,138 @@ export async function resetDemoState() {
       await deleteDoc(d.ref);
     }
   }
+}
+
+/**
+ * Validates bed capacity data object.
+ * @param {Object} data - Bed capacity data
+ * @returns {Object} { valid: boolean, error?: string }
+ */
+export function validateBedCapacity(data) {
+  if (!data || typeof data !== 'object') return { valid: false, error: 'Data must be an object' };
+  
+  if (!data.phc_id || typeof data.phc_id !== 'string') {
+    return { valid: false, error: 'Missing or invalid phc_id' };
+  }
+  
+  const ensureNumber = (val) => typeof val === 'number' && !isNaN(val);
+
+  if (!ensureNumber(data.total_beds) || data.total_beds < 0) {
+    return { valid: false, error: 'total_beds must be a non-negative number' };
+  }
+  if (!ensureNumber(data.occupied_beds) || data.occupied_beds < 0) {
+    return { valid: false, error: 'occupied_beds must be a non-negative number' };
+  }
+  if (!ensureNumber(data.available_beds) || data.available_beds < 0) {
+    return { valid: false, error: 'available_beds must be a non-negative number' };
+  }
+
+  if (data.occupied_beds > data.total_beds) {
+    return { valid: false, error: 'occupied_beds cannot exceed total_beds' };
+  }
+  
+  if (data.available_beds !== data.total_beds - data.occupied_beds) {
+    return { valid: false, error: 'available_beds must equal total_beds - occupied_beds' };
+  }
+  
+  if (data.emergency_beds !== undefined && data.emergency_beds !== null) {
+    if (!ensureNumber(data.emergency_beds) || data.emergency_beds < 0) {
+      return { valid: false, error: 'emergency_beds must be a non-negative number' };
+    }
+    if (data.emergency_beds > data.total_beds) {
+      return { valid: false, error: 'emergency_beds cannot exceed total_beds' };
+    }
+  }
+
+  if (data.icu_beds !== undefined && data.icu_beds !== null) {
+    if (!ensureNumber(data.icu_beds) || data.icu_beds < 0) {
+      return { valid: false, error: 'icu_beds must be a non-negative number' };
+    }
+    if (data.icu_beds > data.total_beds) {
+      return { valid: false, error: 'icu_beds cannot exceed total_beds' };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Fetch bed capacity for a PHC.
+ * Returns null if the document does not exist, explicitly signifying unknown state.
+ * @param {string} phcId 
+ * @param {boolean} isDemo
+ * @returns {Promise<Object|null>}
+ */
+export async function getBedCapacity(phcId, isDemo = false) {
+  checkDbReady();
+  if (!phcId) throw new Error("phcId is required");
+
+  // Validate that PHC actually exists in the database
+  const phcRef = doc(db, "phcs", phcId);
+  const { getDoc } = await import("firebase/firestore");
+  const phcSnap = await getDoc(phcRef);
+  if (!phcSnap.exists()) {
+    throw new Error(`PHC with ID ${phcId} does not exist`);
+  }
+
+  const collectionName = isDemo ? "demo_beds" : "beds";
+  const bedRef = doc(db, collectionName, phcId);
+  const bedSnap = await getDoc(bedRef);
+
+  if (!bedSnap.exists()) {
+    return null; // Missing data means UNKNOWN
+  }
+
+  const bedData = bedSnap.data();
+  const validation = validateBedCapacity(bedData);
+  if (!validation.valid) {
+    throw new Error(`Corrupted bed data for PHC ${phcId}: ${validation.error}`);
+  }
+
+  return bedData;
+}
+
+/**
+ * Update bed capacity safely using a transaction to prevent race conditions.
+ * @param {string} phcId 
+ * @param {Object} data 
+ * @returns {Promise<Object>}
+ */
+export async function updateBedCapacity(phcId, data) {
+  checkDbReady();
+  if (!phcId) throw new Error("phcId is required");
+  
+  // Validate basic constraints before proceeding
+  const validation = validateBedCapacity(data);
+  if (!validation.valid) {
+    throw new Error(`Invalid bed capacity data: ${validation.error}`);
+  }
+
+  const phcRef = doc(db, "phcs", phcId);
+  const bedRef = doc(db, "beds", phcId);
+
+  return await runTransaction(db, async (transaction) => {
+    const phcSnap = await transaction.get(phcRef);
+    if (!phcSnap.exists()) {
+      throw new Error(`PHC with ID ${phcId} does not exist`);
+    }
+
+    const payload = {
+      phc_id: phcId,
+      total_beds: data.total_beds,
+      occupied_beds: data.occupied_beds,
+      available_beds: data.available_beds,
+      last_updated: serverTimestamp()
+    };
+    
+    if (data.emergency_beds !== undefined) {
+      payload.emergency_beds = data.emergency_beds;
+    }
+    if (data.icu_beds !== undefined) {
+      payload.icu_beds = data.icu_beds;
+    }
+
+    transaction.set(bedRef, payload, { merge: true });
+    return { success: true, ...payload };
+  });
 }

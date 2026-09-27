@@ -9,6 +9,11 @@ import {
   getFootfallStats
 } from "./src/services/db.js";
 
+import {
+  buildMultiResourceGeminiContext,
+  GEMINI_SYSTEM_INSTRUCTION
+} from "./src/services/geminiContext.js";
+
 const app = express();
 app.use(express.json());
 
@@ -29,59 +34,24 @@ if (geminiApiKey) {
 }
 
 app.post("/api/ai/explanation", async (req, res) => {
-  const { phcId, medicineId } = req.body;
+  const { phcId, medicineId, targetDate, admissionRate } = req.body;
 
-  if (!phcId || !medicineId) {
-    return res.status(400).json({ error: "phcId and medicineId are required parameters." });
+  if (!phcId) {
+    return res.status(400).json({ error: "phcId is a required parameter." });
   }
 
   try {
-    // 1. Resolve metadata names
-    const phcs = await getPHCs();
-    const medicines = await getMedicines();
+    // 1. Build authoritative multi-resource context from deterministic services
+    const geminiInput = await buildMultiResourceGeminiContext({
+      phcId,
+      medicineId,
+      targetDate: targetDate || "2026-09-14",
+      admissionRate: typeof admissionRate === "number" ? admissionRate : 8
+    });
 
-    const phc = phcs.find((p) => p.phc_id === phcId);
-    const med = medicines.find((m) => m.medicine_id === medicineId);
+    console.log(`Sending multi-resource operational data to Gemini for ${geminiInput.facility.phcName}`);
 
-    if (!phc || !med) {
-      return res.status(404).json({ error: "PHC or Medicine not found in database." });
-    }
-
-    // 2. Fetch calculations dynamically from Firestore (Single Source of Truth)
-    const stockOut = await predictStockOut(phcId, medicineId);
-
-    if (stockOut.error) {
-      return res.json({
-        explanation: "Insufficient historical data for reliable forecasting.",
-        generatedAt: new Date(),
-        model: "gemini-2.5-flash",
-        available: true
-      });
-    }
-
-    // Fetch footfall stats
-    const footfallStats = await getFootfallStats(phcId);
-
-    // 3. Structured input for Gemini
-    const geminiInput = {
-      phcName: phc.name,
-      district: phc.district,
-      medicineName: med.name,
-      unit: med.unit,
-      currentStock: stockOut.currentStock,
-      predicted7DayDemand: stockOut.predicted7DayDemand,
-      averageDailyDemand: stockOut.averageDailyDemand,
-      estimatedDaysRemaining: stockOut.estimatedDaysRemaining,
-      projectedStockOutDate: stockOut.stockOutDate,
-      riskLevel: stockOut.riskLevel,
-      recentFootfallTrend: footfallStats.trend,
-      recentFootfallAverage: footfallStats.last7DaysAvg,
-      previousFootfallAverage: footfallStats.prev7DaysAvg
-    };
-
-    console.log(`Sending runtime data to Gemini for ${phc.name} - ${med.name}`);
-
-    // 4. Safe AI call handling
+    // 2. Safe AI call handling
     if (!aiClient) {
       console.warn("Gemini client not initialized (missing API Key). Returning fallback.");
       return res.json({
@@ -90,38 +60,17 @@ app.post("/api/ai/explanation", async (req, res) => {
       });
     }
 
-    const systemInstruction = `You are MedPulse's clinical supply-chain explanation assistant.
-Your role is to explain already-calculated inventory and demand-risk results to a health officer.
-You MUST treat every numeric value in the provided data as authoritative.
-You MUST NOT recalculate, alter, contradict, or invent numbers.
-You MUST NOT make procurement, treatment, or medical decisions.
-You MUST NOT invent causes that are not supported by the provided data.
-
-Explain:
-1. What is happening.
-2. What evidence in the supplied data explains the risk.
-3. What the health officer should pay attention to.
-
-If the data shows increasing patient footfall and increasing medicine demand, explain that relationship.
-If stock is insufficient for projected demand, explain the stock-out risk.
-If the risk is low, explain why the situation appears stable.
-If information is missing, explicitly say that the available data is insufficient.
-
-Keep the explanation concise, factual, and operational.
-Do not recommend a specific transfer or source PHC. Redistribution is handled separately by MedPulse.
-Return ONLY the explanation text.`;
-
     const response = await aiClient.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: `Here is the structured input data:\n${JSON.stringify(geminiInput, null, 2)}`,
+      contents: `Here is the structured operational input data:\n${JSON.stringify(geminiInput, null, 2)}`,
       config: {
-        systemInstruction
+        systemInstruction: GEMINI_SYSTEM_INSTRUCTION
       }
     });
 
     const explanation = response.text ? response.text.trim() : "";
 
-    // 5. Output Validation
+    // 3. Output Validation
     if (!explanation || explanation.length < 10) {
       throw new Error("Empty or malformed explanation generated.");
     }

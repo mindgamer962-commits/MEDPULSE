@@ -1,0 +1,721 @@
+/* Personnel / Workforce Intelligence Styles */
+
+.personnel-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  padding-bottom: 3rem;
+}
+
+.personnel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 1.5rem;
+}
+
+.page-header-content {
+  flex: 1;
+  min-width: 280px;
+}
+
+.badge-pill.info-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.3rem 0.75rem;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.5rem;
+}
+
+.personnel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.toolbar-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.toolbar-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.personnel-select {
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-weight: 500;
+  outline: none;
+  min-width: 240px;
+  transition: border-color 0.2s;
+}
+
+.personnel-select:focus {
+  border-color: var(--color-primary);
+}
+
+.date-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.personnel-date-input {
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.feed-status-pill {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.25rem 0.5rem;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.feed-status-pill.feed-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #93c5fd;
+}
+
+/* Provenance Banners */
+.personnel-banner {
+  display: flex;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid;
+}
+
+.personnel-banner.warning-banner {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.personnel-banner.prototype-banner {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+  color: #0369a1;
+}
+
+.banner-icon-wrapper {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 0.2rem;
+  color: #0284c7;
+}
+
+.warning-banner .banner-icon-wrapper {
+  color: #d97706;
+}
+
+.banner-body {
+  flex: 1;
+}
+
+.banner-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.banner-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.banner-title.prototype-title {
+  color: #0369a1;
+  letter-spacing: 0.25px;
+}
+
+.badge-tag.prototype-tag {
+  background: #e0f2fe;
+  color: #0284c7;
+  border: 1px solid #7dd3fc;
+  font-weight: 700;
+}
+
+.banner-desc {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  color: #78350f;
+  line-height: 1.5;
+}
+
+.banner-desc.prototype-desc {
+  color: #0c4a6e;
+}
+
+.banner-provenance-note {
+  font-size: 0.825rem;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid #f59e0b;
+  color: #451a03;
+}
+
+.banner-provenance-note.prototype-note {
+  border-left-color: #0284c7;
+  color: #082f49;
+  background: #ffffff;
+}
+
+/* Metrics Grid */
+.personnel-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.personnel-metric-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.metric-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.metric-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.metric-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #94a3b8;
+  background: #f1f5f9;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+}
+
+.metric-value-container {
+  display: flex;
+  align-items: baseline;
+  margin-top: 0.25rem;
+}
+
+.metric-value.unavailable-text {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: -0.5px;
+}
+
+.metric-value.active-metric-value {
+  font-size: 1.65rem;
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -0.5px;
+}
+
+.metric-caption {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Workforce Risk Card */
+.workforce-risk-card {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 768px) {
+  .workforce-risk-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+.risk-card-left {
+  background: #f8fafc;
+  border-right: 1px solid var(--color-border);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.risk-status-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  letter-spacing: 0.5px;
+}
+
+.risk-status-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 9999px;
+  letter-spacing: 0.5px;
+}
+
+.badge-adequate {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
+.badge-at-risk {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fcd34d;
+}
+
+.badge-critical {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.badge-insufficient {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+.risk-status-display {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #334155;
+  letter-spacing: -0.25px;
+}
+
+.risk-attendance-rate {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #1e293b;
+  background: #e2e8f0;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  display: inline-block;
+  margin-top: 0.2rem;
+}
+
+.risk-role-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #f1f5f9;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: #334155;
+}
+
+.risk-role-context-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+
+.risk-role-context-sep {
+  color: #94a3b8;
+}
+
+.risk-disclaimer {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+/* Sections */
+.personnel-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.25rem;
+  gap: 1rem;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.section-subtitle {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.section-status-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.25rem 0.5rem;
+  background: #f1f5f9;
+  color: #475569;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+/* Role Cards Grid */
+.role-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.role-summary-card {
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.role-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.role-card-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.role-card-ratio {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 0.25rem;
+}
+
+.role-ratio-val {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: var(--color-text);
+}
+
+.role-ratio-val.muted-val {
+  font-size: 1.05rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.role-rate-val {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.role-card-subtext {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* Table */
+.role-table-container {
+  overflow-x: auto;
+}
+
+.personnel-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.personnel-table th {
+  background: #f8fafc;
+  padding: 0.75rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.personnel-table td {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.role-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.role-icon {
+  font-size: 1.1rem;
+}
+
+.cell-muted {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.cell-badge {
+  font-size: 0.65rem;
+  padding: 0.2rem 0.5rem;
+  background: #f1f5f9;
+  color: #64748b;
+  border-radius: 4px;
+}
+
+.cell-badge.cell-badge-active {
+  background: #dcfce7;
+  color: #15803d;
+  font-weight: 700;
+}
+
+.role-limitation-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+/* Nearby Workforce Cards */
+.nearby-workforce-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.nearby-facility-card {
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.nearby-facility-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.nearby-facility-name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.nearby-facility-district {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.nearby-distance-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #e2e8f0;
+  color: #334155;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.nearby-facility-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.nearby-status-pill {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 9999px;
+}
+
+.nearby-feed-note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.nearby-metrics-summary {
+  display: flex;
+  justify-content: space-between;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+}
+
+.nearby-submetric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.submetric-lbl {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.submetric-val {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #334155;
+}
+
+.nearby-reason-box {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+  line-height: 1.3;
+}
+
+.nearby-empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--color-text-muted);
+}
+
+/* Governance Banner */
+.personnel-governance-banner {
+  display: flex;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-md);
+  color: #166534;
+}
+
+.gov-icon-wrapper {
+  color: #16a34a;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 0.2rem;
+}
+
+.gov-body {
+  flex: 1;
+}
+
+.gov-title {
+  margin: 0 0 0.4rem 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #15803d;
+}
+
+.gov-text {
+  margin: 0 0 0.85rem 0;
+  font-size: 0.9rem;
+  color: #166534;
+  line-height: 1.5;
+}
+
+.gov-tags {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.gov-tag {
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid #86efac;
+  color: #14532d;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+}
+
+.personnel-loading {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: var(--color-text-muted);
+}

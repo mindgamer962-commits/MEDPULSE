@@ -23,12 +23,45 @@ import {
   setupDemoState,
   resetDemoState
 } from "./services/db";
+import { findNearestPHCs, findPHCsInSameDistrict, findPHCsInOtherDistricts, getPHCResourceAvailability } from "./services/network.js";
+import { getPHCBedAvailability, getBedAvailabilityForPHCs, calculateBedStatus, calculateDynamicBedDemand, calculateCapacityStatus } from "./services/beds.js";
+import { forecastBedDemand } from "./services/bedForecast.js";
+import MigrationPreview from "./components/MigrationPreview.jsx";
+import PersonnelWorkspace from "./components/PersonnelWorkspace.jsx";
+import UnifiedFacilityRiskSection from "./components/UnifiedFacilityRiskSection.jsx";
 import "./App.css";
 
 function App() {
-  // Navigation Tabs: 'inventory', 'footfall', or 'forecast'
+  // Navigation Tabs: 'overview', 'inventory', 'footfall', 'forecast', 'network', 'personnel', 'migration'
   const [activeWorkspace, setActiveWorkspace] = useState("overview");
   const [overviewData, setOverviewData] = useState([]);
+  
+  // Bed Capacity State
+  const [bedData, setBedData] = useState({
+    loading: false,
+    data_available: false,
+    beds: null,
+    status: null,
+    error: null
+  });
+  const [bedForecastData, setBedForecastData] = useState({
+    loading: false,
+    data: null,
+    error: null
+  });
+  const [isBedDemoMode, setIsBedDemoMode] = useState(false);
+  const [demoUseOverride, setDemoUseOverride] = useState(false);
+  const [demoFootfallOverride, setDemoFootfallOverride] = useState(10000);
+  const [demoAdmissionRate, setDemoAdmissionRate] = useState(8);
+  const [capacityNearbyPhcs, setCapacityNearbyPhcs] = useState([]);
+
+  // Network states
+  const [networkData, setNetworkData] = useState({
+    nearby: [],
+    sameDistrict: [],
+    otherDistricts: [],
+    resources: { data_available: false, resources: {} }
+  });
 
   // Baselines
   const [phcs, setPhcs] = useState([]);
@@ -93,7 +126,12 @@ function App() {
         }
       } catch (err) {
         console.error("Failed to load baseline data:", err);
-        setErrorMessage("Firestore connection failure. Check environment variables.");
+        const isPermission = err?.code === 'permission-denied' || err?.message?.includes('permission');
+        setErrorMessage(
+          isPermission
+            ? "Firestore access unavailable (permission-denied). Verify Cloud Firestore security rules on project medpulse-43e02."
+            : "Firestore access unavailable. Check database connection and environment variables."
+        );
       }
     }
     loadBaselines();
@@ -121,12 +159,73 @@ function App() {
         setStockOutResult(null);
         setAiInsight(null);
       } else if (activeWorkspace === "overview") {
+        // Fetch Bed Data in parallel with overview metrics without blocking UI
+        setBedData(prev => ({ ...prev, loading: true, error: null }));
+        getPHCBedAvailability(selectedPhcId, isBedDemoMode).then(bedResponse => {
+          let bedStatus = null;
+          if (bedResponse.data_available && bedResponse.beds) {
+            const statusResult = calculateBedStatus(bedResponse.beds);
+            bedStatus = statusResult.status;
+          }
+          setBedData({
+            loading: false,
+            data_available: bedResponse.data_available,
+            beds: bedResponse.beds,
+            status: bedStatus,
+            error: bedResponse.error || null
+          });
+        }).catch(err => {
+          setBedData({
+            loading: false,
+            data_available: false,
+            beds: null,
+            status: null,
+            error: "Unable to load bed data"
+          });
+        });
+        
+        setBedForecastData(prev => ({ ...prev, loading: true, error: null }));
+        forecastBedDemand(selectedPhcId, demoAdmissionRate).then(forecastResult => {
+           setBedForecastData({
+             loading: false,
+             data: forecastResult,
+             error: null
+           });
+        }).catch(err => {
+           setBedForecastData({
+             loading: false,
+             data: null,
+             error: "Unable to load forecast data"
+           });
+        });
+
         const medsToFetch = medicines.length > 0 ? medicines : await getMedicines();
         const promises = medsToFetch.map(med => predictStockOut(selectedPhcId, med.medicine_id));
         const results = await Promise.all(promises);
         setOverviewData(results.filter(r => !r.error));
         const stats = await getFootfallStats(selectedPhcId);
         setFfStats(stats);
+      } else if (activeWorkspace === "network") {
+        const freshPhcs = await getPHCs();
+        setPhcs(freshPhcs); // Update main state to avoid stale activePHC
+        const nearbyData = await findNearestPHCs(selectedPhcId, 5, freshPhcs);
+        const sameDist = await findPHCsInSameDistrict(selectedPhcId, freshPhcs);
+        const otherDist = await findPHCsInOtherDistricts(selectedPhcId, freshPhcs);
+        const resources = await getPHCResourceAvailability(selectedPhcId);
+        
+        let effectiveRadiusKm = 0;
+        if (nearbyData.results && nearbyData.results.length > 0) {
+          effectiveRadiusKm = nearbyData.results[nearbyData.results.length - 1].distance_km;
+        }
+
+        setNetworkData({ 
+          nearby: nearbyData.results, 
+          locationAvailable: nearbyData.location_available,
+          effectiveRadiusKm,
+          sameDistrict: sameDist, 
+          otherDistricts: otherDist, 
+          resources 
+        });
       }
     } catch (err) {
       console.error(err);
@@ -139,7 +238,61 @@ function App() {
 
   useEffect(() => {
     fetchData();
-  }, [selectedPhcId, activeWorkspace]);
+  }, [selectedPhcId, activeWorkspace, isBedDemoMode]);
+
+  // Calculate dynamic bed demand and capacity gap for DEMO mode
+  let currentFootfall = 0;
+  if (ffStats && ffStats.last7DaysAvg) {
+    currentFootfall = ffStats.last7DaysAvg;
+  }
+  const activeFootfall = demoUseOverride ? demoFootfallOverride : currentFootfall;
+  let estimatedBedDemand = 0;
+  let capacityStatus = null;
+  let capacityGap = 0;
+
+  if (bedData.data_available && bedData.beds) {
+    try {
+      const demandResult = calculateDynamicBedDemand(activeFootfall, demoAdmissionRate);
+      estimatedBedDemand = demandResult.estimatedBedDemand;
+      const statusResult = calculateCapacityStatus(estimatedBedDemand, bedData.beds.available_beds);
+      capacityGap = statusResult.capacityGap;
+      capacityStatus = statusResult.status;
+    } catch (err) {
+      console.error("Bed simulation calculation error:", err);
+    }
+  }
+
+  // Fetch nearby beds if over capacity
+  useEffect(() => {
+    if (capacityGap <= 0 || !selectedPhcId) {
+      setCapacityNearbyPhcs([]);
+      return;
+    }
+    
+    let isMounted = true;
+    const fetchNearbyCapacity = async () => {
+      try {
+        const nearbyData = await findNearestPHCs(selectedPhcId, 5, phcs);
+        if (nearbyData.results && nearbyData.results.length > 0) {
+          const phcIds = nearbyData.results.map(p => p.phc_id);
+          const bedAvail = await getBedAvailabilityForPHCs(phcIds, true);
+          
+          if (!isMounted) return;
+          
+          const nearbyWithBeds = nearbyData.results.map(p => ({
+            ...p,
+            bedData: bedAvail[p.phc_id] || { data_available: false }
+          }));
+          setCapacityNearbyPhcs(nearbyWithBeds);
+        }
+      } catch (err) {
+        console.error("Failed to fetch nearby capacity", err);
+      }
+    };
+    fetchNearbyCapacity();
+    
+    return () => { isMounted = false; };
+  }, [capacityGap, isBedDemoMode, selectedPhcId, phcs]);
 
   // Demo Mode Handlers
   const handleEnterDemo = async () => {
@@ -576,12 +729,33 @@ function App() {
           Forecast & Risk
         </button>
         <button 
+          className={`sidebar-nav-btn ${activeWorkspace === "network" ? "active" : ""}`}
+          onClick={() => { setActiveWorkspace("network"); setStatusMessage(null); setErrorMessage(null); }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+          Network
+        </button>
+        <button 
           className={`sidebar-nav-btn ${activeWorkspace === "demo" ? "active" : ""}`}
           onClick={handleEnterDemo}
           disabled={activeWorkspace === "demo" || loading}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
           Emergency
+        </button>
+        <button 
+          className={`sidebar-nav-btn ${activeWorkspace === "personnel" ? "active" : ""}`}
+          onClick={() => { setActiveWorkspace("personnel"); setStatusMessage(null); setErrorMessage(null); }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          Personnel
+        </button>
+        <button 
+          className={`sidebar-nav-btn ${activeWorkspace === "migration" ? "active" : ""}`}
+          onClick={() => { setActiveWorkspace("migration"); setStatusMessage(null); setErrorMessage(null); }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+          Migration
         </button>
 
         <div className="sidebar-footer">
@@ -640,6 +814,14 @@ function App() {
               <h1 className="page-title">Overview</h1>
               <p className="page-subtitle">Real-time snapshot of medicine supply, demand & stock-out risk</p>
             </div>
+
+            <UnifiedFacilityRiskSection
+              phcs={phcs}
+              selectedPhcId={selectedPhcId}
+              medicines={medicines}
+              medicineResults={overviewData}
+              admissionRate={demoAdmissionRate}
+            />
 
             <div className="kpi-grid">
               <div className="kpi-card kpi-primary">
@@ -859,6 +1041,316 @@ function App() {
                       </svg>
                     </div>
                   </div>
+                </div>
+
+                {/* Bed Availability */}
+                <div className="card">
+                  <div className="card-header" style={{ alignItems: 'flex-start' }}>
+                    <div>
+                      <h2 className="card-title" style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 4v16"></path><path d="M2 8h18a2 2 0 0 1 2 2v10"></path><path d="M2 17h20"></path><path d="M6 8v9"></path></svg>
+                        Bed Availability
+                      </h2>
+                    </div>
+                    <div className="demo-toggle" style={{ display: 'flex', gap: '0.25rem', backgroundColor: 'var(--color-bg-secondary)', padding: '0.25rem', borderRadius: '4px' }}>
+                      <button 
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px', border: 'none', backgroundColor: !isBedDemoMode ? 'var(--color-primary)' : 'transparent', color: !isBedDemoMode ? 'white' : 'var(--color-text)', cursor: 'pointer', fontWeight: 'bold' }}
+                        onClick={() => setIsBedDemoMode(false)}
+                      >LIVE DATA</button>
+                      <button 
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px', border: 'none', backgroundColor: isBedDemoMode ? 'var(--color-warning)' : 'transparent', color: isBedDemoMode ? 'white' : 'var(--color-text)', cursor: 'pointer', fontWeight: 'bold' }}
+                        onClick={() => setIsBedDemoMode(true)}
+                      >DEMO DATA</button>
+                    </div>
+                  </div>
+                  
+                  {isBedDemoMode && (
+                    <div style={{ backgroundColor: 'rgba(234, 179, 8, 0.1)', borderBottom: '1px solid var(--color-warning)', padding: '0.5rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
+                      <span style={{ color: 'var(--color-warning)', fontWeight: 'bold', fontSize: '0.85rem' }}>DEMO DATA</span>
+                      <span style={{ color: 'var(--color-warning)', fontSize: '0.75rem', textAlign: 'center' }}>Simulated for demonstration — not real PHC capacity</span>
+                    </div>
+                  )}
+
+                  {bedData.loading ? (
+                    <div style={{padding: '2rem', textAlign: 'center'}}>
+                      <div className="spinner" style={{margin: '0 auto', marginBottom: '1rem'}}></div>
+                      <div style={{color: 'var(--color-text-muted)'}}>Loading bed data...</div>
+                    </div>
+                  ) : bedData.error ? (
+                    <div style={{padding: '2rem', textAlign: 'center', color: 'var(--color-critical)'}}>
+                      Unable to load bed data
+                    </div>
+                  ) : bedData.status === "INVALID_DATA" ? (
+                    <div style={{padding: '2rem', textAlign: 'center', color: 'var(--color-critical)'}}>
+                      Bed data requires verification
+                    </div>
+                  ) : !bedData.data_available ? (
+                    <div style={{padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)'}}>
+                      Insufficient Data
+                    </div>
+                  ) : (
+                    <div className="bed-stats-container">
+                      <div className="bed-stats-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', padding: '1.5rem' }}>
+                        <div className="bed-stat-box" style={{ textAlign: 'center', padding: '1rem', backgroundColor: 'var(--color-bg-secondary)', borderRadius: '8px' }}>
+                          <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{bedData.beds.total_beds}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Total Beds</div>
+                        </div>
+                        <div className="bed-stat-box" style={{ textAlign: 'center', padding: '1rem', backgroundColor: 'var(--color-bg-secondary)', borderRadius: '8px' }}>
+                          <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{bedData.beds.occupied_beds}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Occupied</div>
+                        </div>
+                        <div className="bed-stat-box" style={{ textAlign: 'center', padding: '1rem', backgroundColor: 'var(--color-bg-secondary)', borderRadius: '8px' }}>
+                          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--color-primary)' }}>{bedData.beds.available_beds}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Available</div>
+                        </div>
+                      </div>
+                      
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', borderTop: '1px solid var(--color-border)' }}>
+                        <div>
+                          <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>Occupancy</div>
+                          <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>{Math.round((bedData.beds.occupied_beds / bedData.beds.total_beds) * 100)}%</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>Status</div>
+                          <span className={`badge ${bedData.status === 'SAFE' ? 'safe' : bedData.status === 'AT_RISK' ? 'warn' : 'crit'}`}>
+                            {bedData.status}
+                          </span>
+                        </div>
+                      </div>
+
+                      {(bedData.beds.emergency_beds !== undefined || bedData.beds.icu_beds !== undefined) && (
+                        <div style={{ display: 'flex', gap: '1rem', padding: '1rem 1.5rem', borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg-secondary)' }}>
+                          {bedData.beds.emergency_beds !== undefined && (
+                            <div style={{ flex: 1 }}>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Emergency Beds: </span>
+                              <strong>{bedData.beds.emergency_beds}</strong>
+                            </div>
+                          )}
+                          {bedData.beds.icu_beds !== undefined && (
+                            <div style={{ flex: 1 }}>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>ICU Beds: </span>
+                              <strong>{bedData.beds.icu_beds}</strong>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {bedData.data_available && bedData.beds && (
+                        <div style={{ padding: '1.5rem', borderTop: '1px solid var(--color-border)' }}>
+                          <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 'bold' }}>CAPACITY PRESSURE ANALYSIS</h4>
+                          
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 'bold' }}>Current Footfall</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <select 
+                                  value={demoUseOverride ? "override" : "current"}
+                                  onChange={(e) => setDemoUseOverride(e.target.value === "override")}
+                                  style={{ padding: '0.25rem', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid var(--color-border)' }}
+                                >
+                                  <option value="current">Current ({currentFootfall})</option>
+                                  <option value="override">Simulation Override</option>
+                                </select>
+                                {demoUseOverride ? (
+                                  <input 
+                                    type="number" 
+                                    value={demoFootfallOverride}
+                                    onChange={(e) => setDemoFootfallOverride(parseInt(e.target.value, 10) || 0)}
+                                    style={{ width: '60px', padding: '0.25rem', fontSize: '0.75rem', borderRadius: '4px', border: '1px solid var(--color-border)' }}
+                                    min="0"
+                                  />
+                                ) : (
+                                  <span style={{ fontWeight: 'bold', fontSize: '1rem' }}>{activeFootfall}</span>
+                                )}
+                              </div>
+                            </div>
+                            
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 'bold' }}>Admission Rate</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                <input 
+                                  type="number" 
+                                  value={demoAdmissionRate}
+                                  onChange={(e) => {
+                                    let val = parseInt(e.target.value, 10);
+                                    if (isNaN(val)) val = 0;
+                                    if (val < 0) val = 0;
+                                    if (val > 100) val = 100;
+                                    setDemoAdmissionRate(val);
+                                  }}
+                                  style={{ width: '60px', padding: '0.4rem', fontSize: '1rem', borderRadius: '4px', border: '1px solid var(--color-border)', textAlign: 'center', color: 'var(--color-text)', backgroundColor: 'var(--color-bg)' }}
+                                  min="0"
+                                  max="100"
+                                />
+                                <span style={{ fontSize: '0.85rem', fontWeight: 'bold' }}>%</span>
+                              </div>
+                            </div>
+                            
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderRadius: '4px' }}>
+                              <span style={{ fontSize: '0.85rem', color: 'var(--color-primary)', textTransform: 'uppercase', fontWeight: 'bold' }}>Estimated Bed Demand</span>
+                              <span style={{ fontWeight: 'bold', fontSize: '1.25rem', color: 'var(--color-primary)' }}>{estimatedBedDemand}</span>
+                            </div>
+                            
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem' }}>
+                              <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 'bold' }}>Available Beds</span>
+                              <span style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{bedData.beds.available_beds}</span>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', borderTop: '1px dashed var(--color-border)' }}>
+                              <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 'bold' }}>Capacity Gap</span>
+                              <span style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{capacityGap > 0 ? `+${capacityGap}` : capacityGap}</span>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', backgroundColor: capacityGap <= 0 ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)', borderRadius: '4px' }}>
+                              <span style={{ fontSize: '0.85rem', color: capacityGap <= 0 ? 'var(--color-safe)' : 'var(--color-critical)', textTransform: 'uppercase', fontWeight: 'bold' }}>Status</span>
+                              <span style={{ fontWeight: 'bold', color: capacityGap <= 0 ? 'var(--color-safe)' : 'var(--color-critical)' }}>{capacityStatus}</span>
+                            </div>
+
+                            {capacityGap > 0 && capacityNearbyPhcs.length > 0 && (
+                              <div style={{ marginTop: '0.5rem', padding: '0.75rem', border: '1px solid var(--color-critical)', borderRadius: '4px', backgroundColor: 'var(--color-bg-secondary)' }}>
+                                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--color-critical)', marginBottom: '0.5rem' }}>OVER CAPACITY: Short {capacityGap} beds</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>Nearby PHC intelligence:</div>
+                                {capacityNearbyPhcs.map((phc, idx) => (
+                                  <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', padding: '0.25rem 0', borderBottom: idx < capacityNearbyPhcs.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                                    <div>
+                                      <strong>{phc.name.replace('PHC ', '')}</strong>
+                                      <span style={{ color: 'var(--color-text-muted)', marginLeft: '0.25rem' }}>({phc.distance_km} km)</span>
+                                    </div>
+                                    <div>
+                                      {phc.bedData.data_available ? (
+                                        <span style={{ fontWeight: 'bold', color: 'var(--color-primary)' }}>{phc.bedData.beds.available_beds} available</span>
+                                      ) : (
+                                        <span style={{ color: 'var(--color-text-muted)' }}>Bed data unavailable</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', textAlign: 'center', marginTop: '0.5rem', fontStyle: 'italic', fontWeight: 'bold' }}>
+                              Footfall represents visits and does not mean every visitor requires admission.
+                            </div>
+
+                            {/* BED CAPACITY FORECAST */}
+                            <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '2px solid var(--color-border)' }}>
+                              <h4 style={{ margin: '0 0 1rem 0', fontSize: '1rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                                BED CAPACITY FORECAST
+                              </h4>
+
+                              {bedForecastData.loading ? (
+                                <div style={{padding: '1rem', textAlign: 'center'}}>
+                                  <div className="spinner" style={{margin: '0 auto', marginBottom: '0.5rem', width: '20px', height: '20px', borderWidth: '2px'}}></div>
+                                  <div style={{fontSize: '0.8rem', color: 'var(--color-text-muted)'}}>Calculating forecast...</div>
+                                </div>
+                              ) : bedForecastData.error ? (
+                                <div style={{padding: '1rem', textAlign: 'center', color: 'var(--color-critical)', backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: '4px'}}>
+                                  {bedForecastData.error}
+                                </div>
+                              ) : bedForecastData.data?.overallStatus === 'INSUFFICIENT_DATA' ? (
+                                <div style={{padding: '1.5rem', textAlign: 'center', backgroundColor: 'var(--color-bg-secondary)', borderRadius: '8px', border: '1px dashed var(--color-border)'}}>
+                                  <div style={{color: 'var(--color-warning)', marginBottom: '0.5rem'}}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                                  </div>
+                                  <div style={{fontSize: '0.9rem', fontWeight: 'bold'}}>Insufficient historical footfall data</div>
+                                  <div style={{fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.25rem'}}>to generate a reliable forecast.</div>
+                                </div>
+                              ) : bedForecastData.data ? (
+                                <>
+                                  <div style={{ marginBottom: '1rem', padding: '0.75rem', backgroundColor: 'var(--color-bg-secondary)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', fontWeight: 'bold' }}>Current Available Beds:</span>
+                                    <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--color-primary)' }}>{bedForecastData.data.currentAvailableBeds}</span>
+                                  </div>
+
+                                  <div style={{ overflowX: 'auto' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', textAlign: 'left' }}>
+                                      <thead>
+                                        <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
+                                          <th style={{ padding: '0.5rem 0.25rem', color: 'var(--color-text-muted)' }}>Day</th>
+                                          <th style={{ padding: '0.5rem 0.25rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>Expected Demand</th>
+                                          <th style={{ padding: '0.5rem 0.25rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>Margin</th>
+                                          <th style={{ padding: '0.5rem 0.25rem', color: 'var(--color-text-muted)', textAlign: 'right' }}>Status</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {bedForecastData.data.forecast.map((f, i) => {
+                                          const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : `Day ${i + 1}`;
+                                          const isOver = f.status === 'OVER_CAPACITY';
+                                          const isAtRisk = f.status === 'AT_RISK';
+                                          return (
+                                            <tr key={f.day} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                                              <td style={{ padding: '0.75rem 0.25rem', fontWeight: 'bold' }}>
+                                                {dayName}
+                                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontWeight: 'normal' }}>{f.date}</div>
+                                              </td>
+                                              <td style={{ padding: '0.75rem 0.25rem', textAlign: 'center', fontWeight: 'bold' }}>{f.expectedBedDemand}</td>
+                                              <td style={{ padding: '0.75rem 0.25rem', textAlign: 'center', color: isOver ? 'var(--color-critical)' : 'var(--color-safe)', fontWeight: 'bold' }}>
+                                                {f.capacityMargin > 0 ? `+${f.capacityMargin}` : f.capacityMargin}
+                                              </td>
+                                              <td style={{ padding: '0.75rem 0.25rem', textAlign: 'right' }}>
+                                                <span className={`badge ${isOver ? 'crit' : isAtRisk ? 'warn' : 'safe'}`} style={{ fontSize: '0.7rem' }}>
+                                                  {f.status.replace('_', ' ')}
+                                                </span>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+
+                                  <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', backgroundColor: 'var(--color-bg-secondary)', borderRadius: '4px' }}>
+                                      <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--color-text-muted)' }}>Forecast Status:</span>
+                                      <span className={`badge ${bedForecastData.data.overallStatus === 'OVER_CAPACITY' ? 'crit' : bedForecastData.data.overallStatus === 'AT_RISK' ? 'warn' : 'safe'}`}>
+                                        {bedForecastData.data.overallStatus.replace('_', ' ')}
+                                      </span>
+                                    </div>
+                                    
+                                    {bedForecastData.data.earliestPredictedShortage ? (() => {
+                                      const shortageDay = bedForecastData.data.forecast.find(f => f.date === bedForecastData.data.earliestPredictedShortage);
+                                      const dayIndex = bedForecastData.data.forecast.findIndex(f => f.date === bedForecastData.data.earliestPredictedShortage);
+                                      const dayName = dayIndex === 0 ? 'Today' : dayIndex === 1 ? 'Tomorrow' : `Day ${dayIndex + 1}`;
+                                      const shortageAmt = shortageDay ? Math.abs(shortageDay.capacityMargin) : 0;
+                                      
+                                      return (
+                                        <div style={{ padding: '1rem', border: '1px solid var(--color-critical)', borderRadius: '6px', backgroundColor: 'rgba(239, 68, 68, 0.05)' }}>
+                                          <h5 style={{ margin: '0 0 0.5rem 0', color: 'var(--color-critical)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                                            Predicted Capacity Shortage
+                                          </h5>
+                                          <div style={{ fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                                            <strong>{dayName}</strong><br/>
+                                            Expected demand: {shortageDay?.expectedBedDemand} beds<br/>
+                                            Available capacity: {shortageDay?.availableBeds} beds<br/>
+                                            <span style={{ color: 'var(--color-critical)', fontWeight: 'bold' }}>Predicted shortage: {shortageAmt} beds</span>
+                                          </div>
+                                          
+                                          <button 
+                                            className="btn btn-primary"
+                                            style={{ width: '100%', fontSize: '0.8rem', padding: '0.5rem' }}
+                                            onClick={() => setActiveWorkspace('network')}
+                                          >
+                                            View Nearby Capacity
+                                          </button>
+                                        </div>
+                                      );
+                                    })() : (
+                                      <div style={{ padding: '1rem', textAlign: 'center', backgroundColor: 'rgba(34, 197, 94, 0.05)', borderRadius: '6px', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
+                                        <div style={{ color: 'var(--color-safe)', fontSize: '0.85rem', fontWeight: 'bold' }}>No capacity shortage predicted</div>
+                                        <div style={{ color: 'var(--color-safe)', fontSize: '0.8rem' }}>for the next 3 days.</div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Recent Alerts */}
@@ -1567,6 +2059,167 @@ function App() {
         )}
 
         {/* ==================================================
+            NETWORK WORKSPACE
+            ================================================== */}
+        {activeWorkspace === "network" && !loading && (
+          <div className="network-workspace">
+            <div className="page-header">
+              <h1 className="page-title">Network Intelligence</h1>
+              <p className="page-subtitle">Real-time resource sharing & logistics analysis</p>
+              
+              <div style={{marginTop: '1rem', padding: '1rem', background: 'var(--color-surface)', borderRadius: '8px', border: '1px solid var(--color-border)'}}>
+                <div style={{fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: '0.25rem'}}>Selected PHC</div>
+                <div style={{fontSize: '1.2rem', fontWeight: 'bold'}}>{activePHC?.name}</div>
+                {activePHC?.address ? (
+                  <div style={{fontSize: '0.9rem', color: 'var(--color-text-muted)', marginTop: '0.25rem'}}>{activePHC.address}</div>
+                ) : (
+                  <div style={{fontSize: '0.9rem', color: 'var(--color-text-muted)', marginTop: '0.25rem'}}>{activePHC?.district_name || activePHC?.district}, {activePHC?.state_name}</div>
+                )}
+              </div>
+            </div>
+
+            <div className="card" style={{marginBottom: '2rem'}}>
+              <div className="card-header">
+                <h2 className="card-title">Resource Availability</h2>
+              </div>
+              <div className="data-table-container" style={{padding: '1.5rem'}}>
+                {!networkData.resources.data_available ? (
+                  <div style={{textAlign: 'center', color: 'var(--color-text-muted)', padding: '2rem'}}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{opacity: 0.5, marginBottom: '1rem'}}><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    <div>Insufficient Data / Data Unavailable</div>
+                  </div>
+                ) : (
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Medicine</th>
+                        <th>Current Stock</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {networkData.resources.resources.medicines.map(med => (
+                        <tr key={med.medicine_id}>
+                          <td><strong>{med.name}</strong></td>
+                          <td>{med.current_stock} {med.unit}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+            <div className="overview-layout">
+              <div className="overview-col-left">
+                <div className="card">
+                  <div className="card-header">
+                    <h2 className="card-title">Nearby PHCs</h2>
+                    {!networkData.locationAvailable ? null : networkData.nearby.length > 0 ? (
+                      <p style={{fontSize: '0.85rem', color: 'var(--color-text-muted)', margin: '0.5rem 0 0 0'}}>
+                        Showing {networkData.nearby.length} nearest {networkData.nearby.length === 1 ? 'PHC' : 'PHCs'} within {networkData.effectiveRadiusKm} km
+                      </p>
+                    ) : (
+                      <p style={{fontSize: '0.85rem', color: 'var(--color-text-muted)', margin: '0.5rem 0 0 0'}}>
+                        No nearby PHCs with verified location data
+                      </p>
+                    )}
+                  </div>
+                  <div className="data-table-container">
+                    {!networkData.locationAvailable ? (
+                      <div style={{textAlign: 'center', color: 'var(--color-warning)', padding: '2rem'}}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginBottom: '1rem'}}><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+                        <div>Location data unavailable</div>
+                      </div>
+                    ) : networkData.nearby.length === 0 ? (
+                      <div style={{textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)'}}>No nearby PHCs with verified location data</div>
+                    ) : (
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>PHC Name</th>
+                            <th>District</th>
+                            <th>State</th>
+                            <th>Distance</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {networkData.nearby.map(phc => (
+                            <tr key={phc.phc_id}>
+                              <td><strong>{phc.name}</strong></td>
+                              <td>{phc.district_name}</td>
+                              <td>{phc.state_name}</td>
+                              <td>{phc.distance_km} km</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="overview-col-right" style={{display: 'flex', flexDirection: 'column', gap: '2rem'}}>
+                <div className="card">
+                  <div className="card-header">
+                    <h2 className="card-title">Same District ({activePHC?.district || activePHC?.district_id})</h2>
+                  </div>
+                  <div className="data-table-container">
+                    {networkData.sameDistrict.length === 0 ? (
+                      <div style={{textAlign: 'center', padding: '1rem', color: 'var(--color-text-muted)'}}>No other PHCs in this district.</div>
+                    ) : (
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>PHC Name</th>
+                            <th>State</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {networkData.sameDistrict.map(phc => (
+                            <tr key={phc.phc_id}>
+                              <td><strong>{phc.name}</strong></td>
+                              <td>{phc.state_name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="card-header">
+                    <h2 className="card-title">Other Districts</h2>
+                  </div>
+                  <div className="data-table-container">
+                    {networkData.otherDistricts.length === 0 ? (
+                      <div style={{textAlign: 'center', padding: '1rem', color: 'var(--color-text-muted)'}}>No PHCs found in other districts.</div>
+                    ) : (
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>PHC Name</th>
+                            <th>District</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {networkData.otherDistricts.slice(0, 10).map(phc => (
+                            <tr key={phc.phc_id}>
+                              <td><strong>{phc.name}</strong></td>
+                              <td>{phc.district_name}, {phc.state_name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ==================================================
             EMERGENCY DEMO WORKSPACE
             ================================================== */}
         {activeWorkspace === "demo" && (
@@ -1688,6 +2341,25 @@ function App() {
             </section>
           </div>
         )}
+
+        {/* ==================================================
+            PERSONNEL / WORKFORCE WORKSPACE
+            ================================================== */}
+        {activeWorkspace === "personnel" && !loading && (
+          <PersonnelWorkspace
+            phcs={phcs}
+            selectedPhcId={selectedPhcId}
+            onSelectPhc={setSelectedPhcId}
+          />
+        )}
+
+        {/* ==================================================
+            MIGRATION WORKSPACE
+            ================================================== */}
+        {activeWorkspace === "migration" && !loading && (
+          <MigrationPreview phcs={phcs} />
+        )}
+        
         </div>
       </main>
     </div>
