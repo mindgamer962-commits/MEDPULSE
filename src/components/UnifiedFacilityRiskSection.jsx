@@ -70,7 +70,8 @@ export default function UnifiedFacilityRiskSection({
     setAiExplanation(null);
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const defaultApiUrl = import.meta.env.DEV ? '' : 'https://medpulse-ec30.onrender.com';
+      const apiUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
       const response = await fetch(`${apiUrl}/api/ai/explanation`, {
         method: 'POST',
         headers: {

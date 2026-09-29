@@ -17,8 +17,28 @@ import {
 const app = express();
 app.use(express.json());
 
-const allowedOrigin = process.env.FRONTEND_URL || "http://localhost:5173";
-app.use(cors({ origin: allowedOrigin }));
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow non-browser requests or same-origin requests without Origin header
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    try {
+      const url = new URL(origin);
+      if (url.protocol === 'https:' && (url.hostname === 'vercel.app' || url.hostname.endsWith('.vercel.app'))) {
+        return callback(null, true);
+      }
+    } catch {
+      // Invalid URL string
+    }
+    return callback(new Error(`CORS origin not allowed: ${origin}`));
+  }
+}));
 
 const PORT = process.env.PORT || 3000;
 
